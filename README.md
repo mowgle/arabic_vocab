@@ -73,14 +73,3 @@ git push -u origin main
 npm install
 npm run dev
 ```
-
-## Notes on the trust model
-
-There's still no login system — anyone who knows a name can see and edit
-that "student's" progress, and shared decks are readable/writable by anyone
-who reaches the Firestore API directly (not just through the app's UI). The
-app's own interface restricts creating/editing shared decks to a user named
-"Sakib", but that check happens in the client code, not in Firestore rules.
-This matches the original design intent (simple, no-account, small-group
-use) — if you later want real per-user privacy, you'd add Firebase
-Authentication and rewrite `firestore.rules` to check `request.auth.uid`.
