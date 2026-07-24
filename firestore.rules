@@ -1,0 +1,31 @@
+rules_version = '2';
+
+// This app has no login system by design — anyone can read/write any
+// student's progress doc or any shared deck, as long as they know (or guess)
+// the doc ID. This mirrors the original trust model: names act as an
+// informal identifier, not a secured account.
+//
+// Paste this into Firebase Console → Firestore Database → Rules, or deploy
+// with the Firebase CLI: firebase deploy --only firestore:rules
+//
+// If you outgrow this trust model later (e.g. want real per-user privacy),
+// you'd add Firebase Authentication and rewrite these rules to check
+// request.auth.uid against the document instead of leaving them open.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // One document per student name, holding their entire profile
+    // (decks, progress, settings) as a JSON string.
+    match /students/{studentId} {
+      allow read, write: if true;
+    }
+
+    // One document per shared deck. The app's own UI restricts creating,
+    // editing, and deleting these to a user named "Sakib" — but note that
+    // restriction is enforced in the client code only, not by these rules.
+    match /sharedDecks/{deckId} {
+      allow read, write: if true;
+    }
+  }
+}
