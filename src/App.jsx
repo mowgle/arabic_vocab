@@ -252,7 +252,7 @@ function NameGate({ onEnter, loading }) {
       <div className="gate-card">
         <div className="gate-mark">﷼‌</div>
         <div className="gate-title">مُفْرَدات</div>
-        <div className="gate-sub">Arabic Vocabulary Trainer</div>
+        <div className="gate-sub">Seekers Light Arabic Vocab Builder</div>
         <p className="gate-copy">Enter your name to start, or pick up right where you left off.</p>
         <input
           className="gate-input"
@@ -274,7 +274,7 @@ function NameGate({ onEnter, loading }) {
 function TopBar({ name, onSwitch }) {
   return (
     <div className="topbar">
-      <div className="topbar-title">مُفْرَدات <span className="topbar-sub">vocab trainer</span></div>
+      <div className="topbar-title">مُفْرَدات <span className="topbar-sub">Seekers Light</span></div>
       <div className="topbar-user">
         <span>{name}</span>
         <button className="linklike" onClick={onSwitch}>switch user</button>
@@ -367,15 +367,6 @@ function HomeScreen({ user, setUser, sharedDecks, onStudy, onGoDecks }) {
         <div className="card-title">Leitner shelf</div>
         <div className="hint">Each box is a review stage. Get a word right and it moves up a box, reviewed less often; get it wrong and it drops back to box 1. Reach the top box twice in a row and it's "mastered."</div>
         <div className="shelf">
-          {counts.map((c, i) => (
-            <div className="shelf-row" key={i}>
-              <div className="shelf-label">{i === 0 ? "new" : `box ${i}`}</div>
-              <div className="shelf-track">
-                <div className="shelf-fill" style={{ width: `${(c / maxCount) * 100}%` }} />
-              </div>
-              <div className="shelf-count">{c}</div>
-            </div>
-          ))}
           <div className="shelf-row mastered-row">
             <div className="shelf-label">mastered</div>
             <div className="shelf-track">
@@ -383,6 +374,18 @@ function HomeScreen({ user, setUser, sharedDecks, onStudy, onGoDecks }) {
             </div>
             <div className="shelf-count">{mastered}</div>
           </div>
+          {counts.map((c, i) => i).reverse().map((i) => {
+            const c = counts[i];
+            return (
+              <div className="shelf-row" key={i}>
+                <div className="shelf-label">{i === 0 ? "new" : `box ${i}`}</div>
+                <div className="shelf-track">
+                  <div className="shelf-fill" style={{ width: `${(c / maxCount) * 100}%` }} />
+                </div>
+                <div className="shelf-count">{c}</div>
+              </div>
+            );
+          })}
         </div>
       </div>
 
@@ -401,42 +404,6 @@ function HomeScreen({ user, setUser, sharedDecks, onStudy, onGoDecks }) {
         >
           Practice all trouble ({trouble.length})
         </button>
-      </div>
-
-      <div className="card">
-        <div className="card-title-row">
-          <div className="card-title">My decks</div>
-          <button className="linklike" onClick={onGoDecks}>manage <ChevronRight size={14} /></button>
-        </div>
-        {user.decks.length === 0 && <div className="empty">No decks yet. Add one to get started.</div>}
-        {user.decks.map((d) => {
-          const dDue = dueWords(user, sharedDecks, d.id).length;
-          return (
-            <label className="multi-deck-row" key={d.id}>
-              <input type="checkbox" checked={selectedDeckIds.includes(d.id)} onChange={() => toggleDeckSelected(d.id)} />
-              <span>{d.name}</span>
-              <span className="deck-meta">{d.words.length} words · {dDue} due</span>
-            </label>
-          );
-        })}
-      </div>
-
-      <div className="card">
-        <div className="card-title-row">
-          <div className="card-title">Shared decks</div>
-          <button className="linklike" onClick={onGoDecks}>manage <ChevronRight size={14} /></button>
-        </div>
-        {sharedDecks.length === 0 && <div className="empty">No shared decks yet. Anyone can upload one from Decks → Shared.</div>}
-        {sharedDecks.map((d) => {
-          const dDue = dueWords(user, sharedDecks, d.id).length;
-          return (
-            <label className="multi-deck-row" key={d.id}>
-              <input type="checkbox" checked={selectedDeckIds.includes(d.id)} onChange={() => toggleDeckSelected(d.id)} />
-              <span>{d.name} <span className="badge badge-gold">shared</span></span>
-              <span className="deck-meta">{d.words.length} words · {dDue} due</span>
-            </label>
-          );
-        })}
       </div>
 
       <div className="card">
@@ -464,6 +431,42 @@ function HomeScreen({ user, setUser, sharedDecks, onStudy, onGoDecks }) {
         </div>
       </div>
 
+      <div className="card">
+        <div className="card-title-row">
+          <div className="card-title">Shared decks</div>
+          <button className="linklike" onClick={onGoDecks}>manage <ChevronRight size={14} /></button>
+        </div>
+        {sharedDecks.length === 0 && <div className="empty">No shared decks yet. Anyone can upload one from Decks → Shared.</div>}
+        {sharedDecks.map((d) => {
+          const dDue = dueWords(user, sharedDecks, d.id).length;
+          return (
+            <label className="multi-deck-row" key={d.id}>
+              <input type="checkbox" checked={selectedDeckIds.includes(d.id)} onChange={() => toggleDeckSelected(d.id)} />
+              <span>{d.name} <span className="badge badge-gold">shared</span></span>
+              <span className="deck-meta">{d.words.length} words · {dDue} due</span>
+            </label>
+          );
+        })}
+      </div>
+
+      <div className="card">
+        <div className="card-title-row">
+          <div className="card-title">My decks</div>
+          <button className="linklike" onClick={onGoDecks}>manage <ChevronRight size={14} /></button>
+        </div>
+        {user.decks.length === 0 && <div className="empty">No decks yet. Add one to get started.</div>}
+        {user.decks.map((d) => {
+          const dDue = dueWords(user, sharedDecks, d.id).length;
+          return (
+            <label className="multi-deck-row" key={d.id}>
+              <input type="checkbox" checked={selectedDeckIds.includes(d.id)} onChange={() => toggleDeckSelected(d.id)} />
+              <span>{d.name}</span>
+              <span className="deck-meta">{d.words.length} words · {dDue} due</span>
+            </label>
+          );
+        })}
+      </div>
+
       {totalWords === 0 && (
         <div className="card callout">
           <div className="card-title">Get started</div>
@@ -488,6 +491,28 @@ function ConfirmDialog({ message, onConfirm, onCancel }) {
         <div className="grid2">
           <button className="btn btn-outline" onClick={onCancel}>Cancel</button>
           <button className="btn btn-gold" onClick={onConfirm}>Delete</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RenameDeckModal({ initialName, onCancel, onSave }) {
+  const [name, setName] = useState(initialName);
+  return (
+    <div className="modal-backdrop" onClick={onCancel}>
+      <div className="modal confirm-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="card-title">Rename deck</div>
+        <input
+          className="input"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && name.trim() && onSave(name)}
+          autoFocus
+        />
+        <div className="grid2">
+          <button className="btn btn-outline" onClick={onCancel}>Cancel</button>
+          <button className="btn btn-gold" disabled={!name.trim()} onClick={() => onSave(name)}>Save</button>
         </div>
       </div>
     </div>
@@ -524,6 +549,7 @@ function DeckManager({ user, setUser, sharedDecks, refreshSharedDecks, onStudy, 
   const [showAddWord, setShowAddWord] = useState(false);
   const [editWord, setEditWord] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null); // { message, action }
+  const [renamingDeck, setRenamingDeck] = useState(null); // { id, currentName, scope }
   const fileRef = useRef(null);
 
   useEffect(() => { refreshSharedDecks(); }, []);
@@ -561,6 +587,13 @@ function DeckManager({ user, setUser, sharedDecks, refreshSharedDecks, onStudy, 
       },
     });
   }
+  function renameDeck(id, newName) {
+    if (!newName.trim()) return;
+    updateUser((u) => {
+      const d = u.decks.find((x) => x.id === id);
+      if (d) d.name = newName.trim();
+    });
+  }
 
   // ----- Shared deck actions -----
   async function addSharedDeck() {
@@ -582,6 +615,11 @@ function DeckManager({ user, setUser, sharedDecks, refreshSharedDecks, onStudy, 
         setConfirmDelete(null);
       },
     });
+  }
+  async function renameSharedDeck(deck, newName) {
+    if (!canManageShared || !newName.trim()) return;
+    await saveSharedDeck({ ...deck, name: newName.trim() });
+    await refreshSharedDecks();
   }
 
   function handleFile(e) {
@@ -719,12 +757,20 @@ function DeckManager({ user, setUser, sharedDecks, refreshSharedDecks, onStudy, 
               {scope === "shared" && <span className="badge badge-gold" style={{ marginLeft: 8 }}>by {displayDeck.createdBy}</span>}
             </div>
             {(scope === "personal" || isOwner) && (
-              <button
-                className="linklike danger"
-                onClick={() => (scope === "personal" ? deleteDeck(displayDeck.id) : deleteSharedDeckAction(displayDeck))}
-              >
-                <Trash2 size={14} /> delete deck
-              </button>
+              <div className="deck-header-actions">
+                <button
+                  className="linklike"
+                  onClick={() => setRenamingDeck({ id: displayDeck.id, currentName: displayDeck.name, scope })}
+                >
+                  <Pencil size={14} /> rename
+                </button>
+                <button
+                  className="linklike danger"
+                  onClick={() => (scope === "personal" ? deleteDeck(displayDeck.id) : deleteSharedDeckAction(displayDeck))}
+                >
+                  <Trash2 size={14} /> delete deck
+                </button>
+              </div>
             )}
           </div>
 
@@ -783,6 +829,22 @@ function DeckManager({ user, setUser, sharedDecks, refreshSharedDecks, onStudy, 
           message={confirmDelete.message}
           onConfirm={confirmDelete.action}
           onCancel={() => setConfirmDelete(null)}
+        />
+      )}
+
+      {renamingDeck && (
+        <RenameDeckModal
+          initialName={renamingDeck.currentName}
+          onCancel={() => setRenamingDeck(null)}
+          onSave={(newName) => {
+            if (renamingDeck.scope === "personal") {
+              renameDeck(renamingDeck.id, newName);
+            } else {
+              const deck = sharedDecks.find((d) => d.id === renamingDeck.id);
+              if (deck) renameSharedDeck(deck, newName);
+            }
+            setRenamingDeck(null);
+          }}
         />
       )}
     </div>
@@ -1248,6 +1310,7 @@ const CSS = `
 }
 .card-title { font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--gold-soft); margin-bottom: 10px; font-weight: 600; }
 .card-title-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.deck-header-actions { display: flex; align-items: center; gap: 14px; }
 
 .hero { background: linear-gradient(135deg, var(--surface-2), var(--surface)); }
 .hero-eyebrow { font-size: 12px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.08em; }
@@ -1262,7 +1325,7 @@ const CSS = `
 .shelf-fill { height: 100%; background: linear-gradient(90deg, var(--gold), var(--gold-soft)); border-radius: 4px; transition: width 0.4s ease; }
 .mastered-fill { background: linear-gradient(90deg, var(--teal), #7ecdc0); }
 .shelf-count { font-size: 12px; color: var(--text-muted); text-align: right; }
-.mastered-row { margin-top: 4px; padding-top: 6px; border-top: 1px dashed var(--border); }
+.mastered-row { margin-bottom: 4px; padding-bottom: 6px; border-bottom: 1px dashed var(--border); }
 
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 
@@ -1322,8 +1385,8 @@ const CSS = `
 
 .ar-kbd { margin-bottom: 12px; }
 .ar-kbd-row { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 5px; }
-.ar-key { background: var(--surface-2); border: 1px solid var(--border); color: var(--text); border-radius: 7px; padding: 7px 9px; font-family: 'Amiri', serif; font-size: 16px; cursor: pointer; min-width: 32px; }
-.ar-key-diacritic { color: var(--gold-soft); font-size: 15px; }
+.ar-key { background: var(--surface-2); border: 1px solid var(--border); color: var(--text); border-radius: 7px; padding: 5px 7px; font-family: 'Amiri', serif; font-size: 20px; line-height: 1; cursor: pointer; min-width: 32px; }
+.ar-key-diacritic { color: var(--gold-soft); font-size: 19px; }
 .ar-key-wide { min-width: 50px; }
 
 .row-header { display: flex; }
