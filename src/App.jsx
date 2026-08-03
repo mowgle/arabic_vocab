@@ -70,6 +70,11 @@ function freshContentWord(en, ar, notes = "") {
   return { id: uid(), en: en.trim(), ar: ar.trim(), notes: notes.trim() };
 }
 
+const BOX_LABELS = ["New", "Seen", "Familiar", "Comfortable", "Strong", "Fluent"];
+function boxLabel(box) {
+  return BOX_LABELS[box] || `box ${box}`;
+}
+
 function freshProgress() {
   return {
     box: 0,
@@ -106,6 +111,16 @@ function freshUser(name) {
 // ---------- Storage (Firestore) ----------
 // Students are stored in a "students" collection, one doc per name.
 // Shared decks are stored in a "sharedDecks" collection, one doc per deck.
+
+// Lightweight pub-sub so storage errors (normally invisible to the user)
+// can be surfaced as an on-screen banner instead of only console.error.
+const storageErrorListeners = new Set();
+function reportStorageError(context, e) {
+  console.error(context, e);
+  const msg = `${context}: ${e?.code || e?.message || String(e)}`;
+  storageErrorListeners.forEach((fn) => fn(msg));
+}
+
 async function loadUser(name) {
   try {
     const ref = doc(db, "students", keyForName(name));
@@ -113,7 +128,7 @@ async function loadUser(name) {
     if (!snap.exists()) return null;
     return snap.data().payload ? JSON.parse(snap.data().payload) : null;
   } catch (e) {
-    console.error("load user failed", e);
+    reportStorageError("Couldn't load your profile from Firestore", e);
     return null;
   }
 }
@@ -122,7 +137,7 @@ async function saveUser(user) {
     const ref = doc(db, "students", keyForName(user.name));
     await setDoc(ref, { payload: JSON.stringify(user), updatedAt: Date.now() });
   } catch (e) {
-    console.error("save failed", e);
+    reportStorageError("Couldn't save your progress to Firestore", e);
   }
 }
 
@@ -141,7 +156,7 @@ async function loadSharedDecks() {
     decks.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
     return decks;
   } catch (e) {
-    console.error("load shared decks failed", e);
+    reportStorageError("Couldn't load shared decks from Firestore", e);
     return [];
   }
 }
@@ -150,14 +165,14 @@ async function saveSharedDeck(deck) {
     const ref = doc(db, "sharedDecks", sharedDeckKey(deck.id));
     await setDoc(ref, { payload: JSON.stringify(deck), updatedAt: Date.now() });
   } catch (e) {
-    console.error("shared deck save failed", e);
+    reportStorageError("Couldn't save the shared deck to Firestore", e);
   }
 }
 async function deleteSharedDeckRemote(id) {
   try {
     await deleteDoc(doc(db, "sharedDecks", sharedDeckKey(id)));
   } catch (e) {
-    console.error("shared deck delete failed", e);
+    reportStorageError("Couldn't delete the shared deck in Firestore", e);
   }
 }
 
@@ -168,7 +183,14 @@ export default function App() {
   const [screen, setScreen] = useState("home"); // home | decks | study | stats | settings
   const [studyConfig, setStudyConfig] = useState(null);
   const [sharedDecks, setSharedDecks] = useState([]);
+  const [storageError, setStorageError] = useState(null);
   const saveTimer = useRef(null);
+
+  useEffect(() => {
+    const listener = (msg) => setStorageError(msg);
+    storageErrorListeners.add(listener);
+    return () => storageErrorListeners.delete(listener);
+  }, []);
 
   const refreshSharedDecks = useCallback(async () => {
     const decks = await loadSharedDecks();
@@ -187,22 +209,36 @@ export default function App() {
     return () => clearTimeout(saveTimer.current);
   }, [user]);
 
+  const errorBanner = storageError && (
+    <div className="storage-error-banner">
+      <span>⚠ {storageError}</span>
+      <button className="storage-error-dismiss" onClick={() => setStorageError(null)}>✕</button>
+    </div>
+  );
+
   if (!user) {
-    return <NameGate onEnter={async (name) => {
-      setLoading(true);
-      let u = await loadUser(name);
-      if (!u) u = freshUser(name);
-      if (!u.sharedProgress) u.sharedProgress = {};
-      if (!u.settings.answerMode) u.settings.answerMode = "mixed";
-      if (!u.settings.sessionSize) u.settings.sessionSize = 40;
-      setLoading(false);
-      setUser(u);
-    }} loading={loading} />;
+    return (
+      <>
+        <style>{CSS}</style>
+        {errorBanner}
+        <NameGate onEnter={async (name) => {
+          setLoading(true);
+          let u = await loadUser(name);
+          if (!u) u = freshUser(name);
+          if (!u.sharedProgress) u.sharedProgress = {};
+          if (!u.settings.answerMode) u.settings.answerMode = "mixed";
+          if (!u.settings.sessionSize) u.settings.sessionSize = 40;
+          setLoading(false);
+          setUser(u);
+        }} loading={loading} />
+      </>
+    );
   }
 
   return (
     <div className="avapp">
       <style>{CSS}</style>
+      {errorBanner}
       <TopBar name={user.name} onSwitch={() => setUser(null)} />
       <div className="avapp-body">
         {screen === "home" && (
@@ -378,7 +414,7 @@ function HomeScreen({ user, setUser, sharedDecks, onStudy, onGoDecks }) {
             const c = counts[i];
             return (
               <div className="shelf-row" key={i}>
-                <div className="shelf-label">{i === 0 ? "new" : `box ${i}`}</div>
+                <div className="shelf-label">{boxLabel(i)}</div>
                 <div className="shelf-track">
                   <div className="shelf-fill" style={{ width: `${(c / maxCount) * 100}%` }} />
                 </div>
@@ -802,7 +838,7 @@ function DeckManager({ user, setUser, sharedDecks, refreshSharedDecks, onStudy, 
                   <div className="word-ar" dir="rtl">{w.ar}</div>
                   <div className="word-badges">
                     {progress.mastered && <span className="badge badge-gold">mastered</span>}
-                    {!progress.mastered && <span className="badge">box {progress.box}</span>}
+                    {!progress.mastered && <span className="badge">{boxLabel(progress.box)}</span>}
                     {progress.trouble && <span className="badge badge-red">trouble</span>}
                   </div>
                   <div className="word-actions">
@@ -1293,6 +1329,13 @@ const CSS = `
 .gate-note { margin-top: 16px; color: var(--text-muted); font-size: 12px; line-height: 1.5; }
 
 .avapp-body { padding: 12px 14px 90px; max-width: 640px; margin: 0 auto; }
+
+.storage-error-banner {
+  background: #4a2216; color: #ffd9c4; border-bottom: 1px solid var(--rust);
+  padding: 10px 16px; font-size: 13px; display: flex; justify-content: space-between;
+  align-items: center; gap: 12px; position: sticky; top: 0; z-index: 20;
+}
+.storage-error-dismiss { background: none; border: none; color: #ffd9c4; cursor: pointer; font-size: 14px; }
 
 .topbar {
   display: flex; justify-content: space-between; align-items: center;

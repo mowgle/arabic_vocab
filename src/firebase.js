@@ -17,7 +17,17 @@ const firebaseConfig = {
 };
 
 import { initializeApp } from "firebase/app";
-import { getFirestore } from "firebase/firestore";
+import { initializeFirestore } from "firebase/firestore";
 
 const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app);
+
+// Skip Firestore's default transport auto-detection (which tries a
+// streaming connection first and can stall for 10-20+ seconds on some
+// networks/browsers before falling back) and go straight to long-polling,
+// which is slightly less efficient per-request but connects fast and
+// reliably everywhere.
+export const db = initializeFirestore(app, {
+  experimentalAutoDetectLongPolling: false,
+  experimentalForceLongPolling: true,
+  useFetchStreams: false,
+});
