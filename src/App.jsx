@@ -70,7 +70,7 @@ function freshContentWord(en, ar, notes = "") {
   return { id: uid(), en: en.trim(), ar: ar.trim(), notes: notes.trim() };
 }
 
-const BOX_LABELS = ["New", "Seen", "Familiar", "Comfortable", "Strong", "Fluent"];
+const BOX_LABELS = ["New", "Seen", "Familiar", "Good", "Strong", "Fluent"];
 function boxLabel(box) {
   return BOX_LABELS[box] || `box ${box}`;
 }
@@ -1444,7 +1444,7 @@ const CSS = `
 .flashcard { text-align: center; padding: 32px 20px; }
 .flash-eyebrow { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 14px; }
 .flash-prompt { font-size: 26px; font-weight: 600; margin-bottom: 8px; }
-.flash-prompt.arabic { font-family: 'Amiri', serif; font-size: 44px; }
+.flash-prompt.arabic { font-family: 'Amiri', serif; font-size: 60px; }
 .flash-notes { color: var(--text-muted); font-size: 13px; margin-bottom: 16px; }
 
 .mc-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 18px; }
@@ -1488,7 +1488,7 @@ const CSS = `
 .nav-btn.active { color: var(--gold-soft); }
 
 @media (max-width: 420px) {
-  .flash-prompt.arabic { font-size: 34px; }
+  .flash-prompt.arabic { font-size: 52px; }
   .mc-grid { grid-template-columns: 1fr; }
 }
 `;
