@@ -7,13 +7,14 @@
 // not secrets. Access control is enforced by Firestore Security Rules
 // (see firestore.rules in this repo), not by hiding this config.
 // ---------------------------------------------------------------------------
+  
 const firebaseConfig = {
-  apiKey: "PASTE_YOUR_API_KEY_HERE",
-  authDomain: "PASTE_YOUR_PROJECT_ID.firebaseapp.com",
-  projectId: "PASTE_YOUR_PROJECT_ID",
-  storageBucket: "PASTE_YOUR_PROJECT_ID.appspot.com",
-  messagingSenderId: "PASTE_YOUR_SENDER_ID",
-  appId: "PASTE_YOUR_APP_ID",
+  apiKey: "AIzaSyAEYz7XurI2r7NihIrVx8pjunflbSZOfB0",
+  authDomain: "seekers-light-arabic-vocab.firebaseapp.com",
+  projectId: "seekers-light-arabic-vocab",
+  storageBucket: "seekers-light-arabic-vocab.firebasestorage.app",
+  messagingSenderId: "1090628488929",
+  appId: "1:1090628488929:web:13e05fa5db272bead7b1a0"
 };
 
 import { initializeApp } from "firebase/app";
