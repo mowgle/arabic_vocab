@@ -1,13 +1,22 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import * as XLSX from "xlsx";
 import Papa from "papaparse";
-import { Upload, Plus, Pencil, Trash2, ArrowLeftRight, X, Check, ChevronRight, BookOpen, Home as HomeIcon, BarChart3, Settings as SettingsIcon, Volume2 } from "lucide-react";
+import { Upload, Plus, Pencil, Trash2, ArrowLeftRight, X, Check, ChevronRight, BookOpen, Home as HomeIcon, BarChart3, Settings as SettingsIcon, Volume2, Flag } from "lucide-react";
 import { doc, getDoc, setDoc, deleteDoc, collection, getDocs } from "firebase/firestore";
 import { db } from "./firebase";
 
 // ---------- Constants ----------
-const BOX_INTERVALS = [1, 1, 2, 4, 8, 16]; // index = box number (0 = MC stage)
+// How many days must pass before a word in each box becomes due again.
+// Index = box number (0 = brand new / multiple-choice stage).
+// Change these numbers to adjust the spacing — e.g. set index 1 to 3 to make
+// box 1 words come back after 3 days instead of 1.
+const BOX_INTERVAL_DAYS = [0, 1, 3, 7, 14, 30];
+const DAY_MS = 24 * 60 * 60 * 1000;
 const TROUBLE_THRESHOLD = 3;
+
+// Names allowed to add/edit/delete shared decks and review reported words.
+const MANAGER_NAMES = ["sakib", "zia"];
+
 const DIACRITIC_REGEX = /[\u064B-\u0652\u0670\u0640]/g;
 const ARABIC_KEYS_LETTERS = [
   "ا","ب","ت","ث","ج","ح","خ","د","ذ","ر","ز","س","ش","ص","ض",
@@ -60,7 +69,7 @@ function freshWord(en, ar, notes = "") {
     totalCorrect: 0,
     mastered: false,
     trouble: false,
-    dueSession: 0,
+    dueAt: 0,
     lastCorrectAtMax: false,
   };
 }
@@ -70,7 +79,7 @@ function freshContentWord(en, ar, notes = "") {
   return { id: uid(), en: en.trim(), ar: ar.trim(), notes: notes.trim() };
 }
 
-const BOX_LABELS = ["New", "Seen", "Familiar", "Good", "Strong", "Fluent"];
+const BOX_LABELS = ["New", "Seen", "Familiar", "Comfortable", "Strong", "Fluent"];
 function boxLabel(box) {
   return BOX_LABELS[box] || `box ${box}`;
 }
@@ -83,7 +92,7 @@ function freshProgress() {
     totalCorrect: 0,
     mastered: false,
     trouble: false,
-    dueSession: 0,
+    dueAt: 0,
     lastCorrectAtMax: false,
   };
 }
@@ -103,7 +112,15 @@ function freshUser(name) {
     sessionCount: 0,
     decks: [freshDeck("My First Deck")],
     sharedProgress: {}, // { [sharedDeckId]: { [wordId]: progress } }
-    settings: { direction: "en-ar", strictness: "letters", answerMode: "mixed", sessionSize: 40 },
+    settings: {
+      direction: "en-ar",
+      strictness: "letters",
+      answerMode: "mixed",
+      sessionSize: 40,
+      studyAnytime: false,
+      allowInstantMaster: true,
+      allowReporting: true,
+    },
     history: [], // session summaries
   };
 }
@@ -176,6 +193,38 @@ async function deleteSharedDeckRemote(id) {
   }
 }
 
+// Word reports: flagged by any user, reviewed by managers only.
+async function loadWordReports() {
+  try {
+    const snap = await getDocs(collection(db, "wordReports"));
+    const reports = [];
+    snap.forEach((d) => {
+      try {
+        reports.push(JSON.parse(d.data().payload));
+      } catch (e) { /* skip unreadable entry */ }
+    });
+    reports.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    return reports;
+  } catch (e) {
+    reportStorageError("Couldn't load word reports from Firestore", e);
+    return [];
+  }
+}
+async function saveWordReport(report) {
+  try {
+    await setDoc(doc(db, "wordReports", report.id), { payload: JSON.stringify(report), updatedAt: Date.now() });
+  } catch (e) {
+    reportStorageError("Couldn't submit the report to Firestore", e);
+  }
+}
+async function deleteWordReportRemote(id) {
+  try {
+    await deleteDoc(doc(db, "wordReports", id));
+  } catch (e) {
+    reportStorageError("Couldn't remove the report in Firestore", e);
+  }
+}
+
 // ---------- App ----------
 export default function App() {
   const [user, setUser] = useState(null);
@@ -228,6 +277,9 @@ export default function App() {
           if (!u.sharedProgress) u.sharedProgress = {};
           if (!u.settings.answerMode) u.settings.answerMode = "mixed";
           if (!u.settings.sessionSize) u.settings.sessionSize = 40;
+          if (u.settings.studyAnytime === undefined) u.settings.studyAnytime = false;
+          if (u.settings.allowInstantMaster === undefined) u.settings.allowInstantMaster = true;
+          if (u.settings.allowReporting === undefined) u.settings.allowReporting = true;
           setLoading(false);
           setUser(u);
         }} loading={loading} />
@@ -273,8 +325,11 @@ export default function App() {
         {screen === "settings" && (
           <SettingsScreen user={user} setUser={setUser} onBack={() => setScreen("home")} />
         )}
+        {screen === "admin" && isAdmin(user.name) && (
+          <AdminPanel onBack={() => setScreen("home")} />
+        )}
       </div>
-      <BottomNav screen={screen} setScreen={setScreen} />
+      <BottomNav screen={screen} setScreen={setScreen} showAdmin={isAdmin(user.name)} />
     </div>
   );
 }
@@ -319,12 +374,13 @@ function TopBar({ name, onSwitch }) {
   );
 }
 
-function BottomNav({ screen, setScreen }) {
+function BottomNav({ screen, setScreen, showAdmin }) {
   const items = [
     { id: "home", label: "Home", Icon: HomeIcon },
     { id: "decks", label: "Decks", Icon: BookOpen },
     { id: "stats", label: "Stats", Icon: BarChart3 },
     { id: "settings", label: "Settings", Icon: SettingsIcon },
+    ...(showAdmin ? [{ id: "admin", label: "Admin", Icon: Flag }] : []),
   ];
   return (
     <div className="bottomnav">
@@ -361,21 +417,29 @@ function boxCounts(user, sharedDecks = []) {
   return { counts, mastered };
 }
 function dueWords(user, sharedDecks = [], deckIds = null) {
-  const s = user.sessionCount;
+  const now = Date.now();
   const ids = deckIds ? (Array.isArray(deckIds) ? deckIds : [deckIds]) : null;
   return allWords(user, sharedDecks).filter(
-    (w) => !w.mastered && w.dueSession <= s && (ids ? ids.includes(w.deckId) : true)
+    (w) => !w.mastered && (w.dueAt || 0) <= now && (ids ? ids.includes(w.deckId) : true)
   );
 }
 function troubleWords(user, sharedDecks = [], deckIds = null) {
   const ids = deckIds ? (Array.isArray(deckIds) ? deckIds : [deckIds]) : null;
   return allWords(user, sharedDecks).filter((w) => w.trouble && (ids ? ids.includes(w.deckId) : true));
 }
+// Every non-mastered word in scope, ignoring whether it's actually due yet —
+// used when the "study anytime" setting is on.
+function studyableWords(user, sharedDecks = [], deckIds = null) {
+  const ids = deckIds ? (Array.isArray(deckIds) ? deckIds : [deckIds]) : null;
+  return allWords(user, sharedDecks).filter((w) => !w.mastered && (ids ? ids.includes(w.deckId) : true));
+}
 
 function HomeScreen({ user, setUser, sharedDecks, onStudy, onGoDecks }) {
   const { counts, mastered } = boxCounts(user, sharedDecks);
   const totalWords = allWords(user, sharedDecks).length;
+  const studyAnytime = !!user.settings.studyAnytime;
   const due = dueWords(user, sharedDecks);
+  const studyPool = studyAnytime ? studyableWords(user, sharedDecks) : due;
   const trouble = troubleWords(user, sharedDecks);
   const maxCount = Math.max(1, ...counts);
   const [selectedDeckIds, setSelectedDeckIds] = useState([]);
@@ -384,7 +448,10 @@ function HomeScreen({ user, setUser, sharedDecks, onStudy, onGoDecks }) {
     setSelectedDeckIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   }
 
-  const selectedDue = dueWords(user, sharedDecks, selectedDeckIds).length;
+  const selectedStudyCount = (studyAnytime
+    ? studyableWords(user, sharedDecks, selectedDeckIds)
+    : dueWords(user, sharedDecks, selectedDeckIds)
+  ).length;
   const selectedTrouble = troubleWords(user, sharedDecks, selectedDeckIds).length;
 
   return (
@@ -428,10 +495,10 @@ function HomeScreen({ user, setUser, sharedDecks, onStudy, onGoDecks }) {
       <div className="grid2">
         <button
           className="btn btn-gold big"
-          disabled={due.length === 0}
+          disabled={studyPool.length === 0}
           onClick={() => onStudy({ source: "due", deckIds: null })}
         >
-          Study all due ({due.length})
+          {studyAnytime ? "Study all words" : "Study all due"} ({studyPool.length})
         </button>
         <button
           className="btn btn-outline big"
@@ -448,14 +515,15 @@ function HomeScreen({ user, setUser, sharedDecks, onStudy, onGoDecks }) {
           {selectedDeckIds.length === 0
             ? "Tick one deck to study it alone, or several to combine them into one session."
             : `${selectedDeckIds.length} deck${selectedDeckIds.length > 1 ? "s" : ""} selected.`}
+          {studyAnytime && " \"Study anytime\" is on, so due dates are ignored for this session."}
         </div>
         <div className="grid2">
           <button
             className="btn btn-gold"
-            disabled={selectedDeckIds.length === 0 || selectedDue === 0}
+            disabled={selectedDeckIds.length === 0 || selectedStudyCount === 0}
             onClick={() => onStudy({ source: "due", deckIds: selectedDeckIds })}
           >
-            Study due ({selectedDue})
+            {studyAnytime ? "Study" : "Study due"} ({selectedStudyCount})
           </button>
           <button
             className="btn btn-outline"
@@ -475,11 +543,12 @@ function HomeScreen({ user, setUser, sharedDecks, onStudy, onGoDecks }) {
         {sharedDecks.length === 0 && <div className="empty">No shared decks yet. Anyone can upload one from Decks → Shared.</div>}
         {sharedDecks.map((d) => {
           const dDue = dueWords(user, sharedDecks, d.id).length;
+          const dStudyable = studyAnytime ? studyableWords(user, sharedDecks, d.id).length : dDue;
           return (
             <label className="multi-deck-row" key={d.id}>
               <input type="checkbox" checked={selectedDeckIds.includes(d.id)} onChange={() => toggleDeckSelected(d.id)} />
               <span>{d.name} <span className="badge badge-gold">shared</span></span>
-              <span className="deck-meta">{d.words.length} words · {dDue} due</span>
+              <span className="deck-meta">{d.words.length} words · {studyAnytime ? `${dStudyable} available` : `${dDue} due`}</span>
             </label>
           );
         })}
@@ -493,11 +562,12 @@ function HomeScreen({ user, setUser, sharedDecks, onStudy, onGoDecks }) {
         {user.decks.length === 0 && <div className="empty">No decks yet. Add one to get started.</div>}
         {user.decks.map((d) => {
           const dDue = dueWords(user, sharedDecks, d.id).length;
+          const dStudyable = studyAnytime ? studyableWords(user, sharedDecks, d.id).length : dDue;
           return (
             <label className="multi-deck-row" key={d.id}>
               <input type="checkbox" checked={selectedDeckIds.includes(d.id)} onChange={() => toggleDeckSelected(d.id)} />
               <span>{d.name}</span>
-              <span className="deck-meta">{d.words.length} words · {dDue} due</span>
+              <span className="deck-meta">{d.words.length} words · {studyAnytime ? `${dStudyable} available` : `${dDue} due`}</span>
             </label>
           );
         })}
@@ -514,8 +584,8 @@ function HomeScreen({ user, setUser, sharedDecks, onStudy, onGoDecks }) {
   );
 }
 
-function isSakib(name) {
-  return (name || "").trim().toLowerCase() === "sakib";
+function isAdmin(name) {
+  return MANAGER_NAMES.includes((name || "").trim().toLowerCase());
 }
 
 function ConfirmDialog({ message, onConfirm, onCancel }) {
@@ -527,6 +597,40 @@ function ConfirmDialog({ message, onConfirm, onCancel }) {
         <div className="grid2">
           <button className="btn btn-outline" onClick={onCancel}>Cancel</button>
           <button className="btn btn-gold" onClick={onConfirm}>Delete</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ReportWordModal({ word, onCancel, onSubmit }) {
+  const [reason, setReason] = useState("");
+  const [sending, setSending] = useState(false);
+  return (
+    <div className="modal-backdrop" onClick={onCancel}>
+      <div className="modal confirm-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="card-title">Report this word</div>
+        <p className="confirm-message">
+          <span className="word-en">{word.en}</span> — <span className="word-ar" dir="rtl">{word.ar}</span>
+          <br />This will be sent to the app's managers for review.
+        </p>
+        <label className="field-label">What's wrong with it? (optional)</label>
+        <input
+          className="input"
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          placeholder="e.g. missing a vowel mark, wrong translation…"
+          autoFocus
+        />
+        <div className="grid2">
+          <button className="btn btn-outline" onClick={onCancel} disabled={sending}>Cancel</button>
+          <button
+            className="btn btn-gold"
+            disabled={sending}
+            onClick={async () => { setSending(true); await onSubmit(reason); }}
+          >
+            {sending ? "Sending…" : "Submit report"}
+          </button>
         </div>
       </div>
     </div>
@@ -592,7 +696,7 @@ function DeckManager({ user, setUser, sharedDecks, refreshSharedDecks, onStudy, 
 
   const activeDeck = user.decks.find((d) => d.id === activeDeckId);
   const activeShared = sharedDecks.find((d) => d.id === activeSharedId);
-  const canManageShared = isSakib(user.name);
+  const canManageShared = isAdmin(user.name);
   const isOwner = canManageShared;
 
   function updateUser(fn) {
@@ -750,8 +854,8 @@ function DeckManager({ user, setUser, sharedDecks, refreshSharedDecks, onStudy, 
         {scope === "shared" && (
           <div className="hint">
             {canManageShared
-              ? "Shared decks are visible to everyone who uses this app. As the deck manager, you can add, edit, and delete shared decks and their words."
-              : "Shared decks are visible to everyone. Only Sakib can add, edit, or delete shared decks — everyone else can study them."}
+              ? "Shared decks are visible to everyone who uses this app. As a deck manager, you can add, edit, and delete shared decks and their words."
+              : `Shared decks are visible to everyone. Only ${MANAGER_NAMES.map((n) => n[0].toUpperCase() + n.slice(1)).join(" and ")} can add, edit, or delete shared decks — everyone else can study them.`}
           </div>
         )}
 
@@ -947,7 +1051,14 @@ function ArabicKeyboard({ onKey, onBackspace }) {
 
 // ---------- Study Session ----------
 function buildQueue(user, sharedDecks, config) {
-  const list = config.source === "trouble" ? troubleWords(user, sharedDecks, config.deckIds) : dueWords(user, sharedDecks, config.deckIds);
+  let list;
+  if (config.source === "trouble") {
+    list = troubleWords(user, sharedDecks, config.deckIds);
+  } else if (user.settings.studyAnytime) {
+    list = studyableWords(user, sharedDecks, config.deckIds);
+  } else {
+    list = dueWords(user, sharedDecks, config.deckIds);
+  }
   const size = user.settings.sessionSize || 40;
   return shuffle(list).slice(0, size);
 }
@@ -968,6 +1079,7 @@ function StudySession({ user, setUser, sharedDecks, config, onFinish }) {
   const [selectedMC, setSelectedMC] = useState(null);
   const [cardDirection, setCardDirection] = useState(user.settings.direction === "mixed" ? (Math.random() < 0.5 ? "en-ar" : "ar-en") : user.settings.direction);
   const [stats, setStats] = useState({ reviewed: 0, correct: 0, promoted: 0, demoted: 0, mastered: 0 });
+  const [reportOpen, setReportOpen] = useState(false);
   const inputRef = useRef(null);
   const settingsDirection = user.settings.direction;
   const answerMode = user.settings.answerMode || "mixed";
@@ -988,6 +1100,7 @@ function StudySession({ user, setUser, sharedDecks, config, onFinish }) {
     setTyped("");
     setSelectedMC(null);
     setPhase("question");
+    setReportOpen(false);
     setCardDirection(settingsDirection === "mixed" ? (Math.random() < 0.5 ? "en-ar" : "ar-en") : settingsDirection);
     setTimeout(() => inputRef.current?.focus(), 50);
   }, [idx]);
@@ -1042,14 +1155,14 @@ function StudySession({ user, setUser, sharedDecks, config, onFinish }) {
         w.box = Math.min(5, w.box + 1);
         w.lastCorrectAtMax = false;
       }
-      w.dueSession = copy.sessionCount + BOX_INTERVALS[w.box];
+      w.dueAt = Date.now() + BOX_INTERVAL_DAYS[w.box] * DAY_MS;
       if (w.box > wasBox) promoted = 1;
     } else {
       w.totalWrong++;
       w.lastCorrectAtMax = false;
       if (w.box > 0) w.box = 1;
       if (w.totalWrong >= TROUBLE_THRESHOLD) w.trouble = true;
-      w.dueSession = copy.sessionCount + BOX_INTERVALS[1];
+      w.dueAt = Date.now() + BOX_INTERVAL_DAYS[1] * DAY_MS;
       demoted = 1;
     }
     if (w.mastered && !wasMastered) justMastered = 1;
@@ -1062,6 +1175,54 @@ function StudySession({ user, setUser, sharedDecks, config, onFinish }) {
       demoted: s.demoted + demoted,
       mastered: s.mastered + justMastered,
     }));
+  }
+
+  function markAsMastered() {
+    const copy = JSON.parse(JSON.stringify(user));
+    let w;
+    if (current.source === "shared") {
+      copy.sharedProgress = copy.sharedProgress || {};
+      copy.sharedProgress[current.deckId] = copy.sharedProgress[current.deckId] || {};
+      const existing = copy.sharedProgress[current.deckId][current.id] || freshProgress();
+      copy.sharedProgress[current.deckId][current.id] = existing;
+      w = existing;
+    } else {
+      const deck = copy.decks.find((d) => d.words.some((x) => x.id === current.id));
+      w = deck.words.find((x) => x.id === current.id);
+    }
+    const wasMastered = w.mastered;
+    w.box = 5;
+    w.lastCorrectAtMax = true;
+    w.mastered = true;
+    w.dueAt = 0;
+
+    setUser(copy);
+    setWasCorrect(true);
+    setPhase("feedback");
+    setStats((s) => ({
+      ...s,
+      reviewed: s.reviewed + 1,
+      correct: s.correct + 1,
+      mastered: s.mastered + (wasMastered ? 0 : 1),
+    }));
+  }
+
+  async function submitReport(reason) {
+    const report = {
+      id: uid(),
+      wordId: current.id,
+      en: current.en,
+      ar: current.ar,
+      notes: current.notes || "",
+      deckId: current.deckId,
+      deckName: current.deckName,
+      source: current.source,
+      reportedBy: user.name,
+      reason: reason.trim(),
+      createdAt: Date.now(),
+    };
+    await saveWordReport(report);
+    setReportOpen(false);
   }
 
   function checkTyped() {
@@ -1102,7 +1263,14 @@ function StudySession({ user, setUser, sharedDecks, config, onFinish }) {
       </div>
 
       <div className="card flashcard">
-        <div className="flash-eyebrow">{showMC ? "multiple choice" : "type the answer"} · {direction === "en-ar" ? "EN → AR" : "AR → EN"}</div>
+        <div className="flash-eyebrow-row">
+          <div className="flash-eyebrow">{showMC ? "multiple choice" : "type the answer"} · {direction === "en-ar" ? "EN → AR" : "AR → EN"}</div>
+          {user.settings.allowReporting !== false && (
+            <button className="report-link" onClick={() => setReportOpen(true)} title="Report this word as incorrect">
+              🚩 report
+            </button>
+          )}
+        </div>
         <div className={"flash-prompt" + (promptIsArabic ? " arabic" : "")} dir={promptIsArabic ? "rtl" : "ltr"}>
           {promptText}
         </div>
@@ -1136,6 +1304,12 @@ function StudySession({ user, setUser, sharedDecks, config, onFinish }) {
           </div>
         )}
 
+        {phase === "question" && user.settings.allowInstantMaster !== false && (
+          <button className="linklike instant-master-btn" onClick={markAsMastered}>
+            ✓ I've already mastered this word
+          </button>
+        )}
+
         {phase === "feedback" && (
           <div className={"feedback " + (wasCorrect ? "feedback-correct" : "feedback-wrong")}>
             <div className="feedback-icon">{wasCorrect ? <Check size={22} /> : <X size={22} />}</div>
@@ -1147,6 +1321,14 @@ function StudySession({ user, setUser, sharedDecks, config, onFinish }) {
           </div>
         )}
       </div>
+
+      {reportOpen && (
+        <ReportWordModal
+          word={current}
+          onCancel={() => setReportOpen(false)}
+          onSubmit={submitReport}
+        />
+      )}
     </div>
   );
 }
@@ -1206,6 +1388,57 @@ function StatsScreen({ user, sharedDecks, onBack }) {
 }
 
 // ---------- Settings ----------
+// ---------- Admin Panel ----------
+function AdminPanel({ onBack }) {
+  const [reports, setReports] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  const refresh = async () => {
+    setLoading(true);
+    const r = await loadWordReports();
+    setReports(r);
+    setLoading(false);
+  };
+
+  useEffect(() => { refresh(); }, []);
+
+  async function dismiss(id) {
+    await deleteWordReportRemote(id);
+    setReports((rs) => rs.filter((r) => r.id !== id));
+  }
+
+  return (
+    <div className="screen">
+      <div className="row-header">
+        <button className="linklike" onClick={onBack}>← back</button>
+      </div>
+      <div className="card">
+        <div className="card-title-row">
+          <div className="card-title">Reported words</div>
+          <button className="linklike" onClick={refresh}>refresh</button>
+        </div>
+        <div className="hint">Words flagged by any user as incorrect. Dismiss a report once you've reviewed or fixed it.</div>
+        {loading && <div className="empty">Loading…</div>}
+        {!loading && reports.length === 0 && <div className="empty">No open reports. 🎉</div>}
+        {!loading && reports.map((r) => (
+          <div className="report-row" key={r.id}>
+            <div className="report-words">
+              <div className="word-en">{r.en}</div>
+              <div className="word-ar" dir="rtl">{r.ar}</div>
+            </div>
+            <div className="report-meta">
+              <span className="badge">{r.deckName} {r.source === "shared" ? "(shared)" : "(personal)"}</span>
+              <span className="report-by">reported by {r.reportedBy}</span>
+            </div>
+            {r.reason && <div className="report-reason">"{r.reason}"</div>}
+            <button className="btn btn-small btn-outline" onClick={() => dismiss(r.id)}>Dismiss</button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function SettingsScreen({ user, setUser, onBack }) {
   function update(patch) {
     setUser((u) => ({ ...u, settings: { ...u.settings, ...patch } }));
@@ -1247,6 +1480,45 @@ function SettingsScreen({ user, setUser, onBack }) {
           </button>
         </div>
         <div className="hint">Mixed shows new words as multiple choice, then switches to typing once a word has been answered correctly once.</div>
+      </div>
+
+      <div className="card">
+        <div className="card-title">Study decks anytime</div>
+        <div className="toggle-row">
+          <button className={"toggle-opt" + (!user.settings.studyAnytime ? " active" : "")} onClick={() => update({ studyAnytime: false })}>
+            Only when due
+          </button>
+          <button className={"toggle-opt" + (user.settings.studyAnytime ? " active" : "")} onClick={() => update({ studyAnytime: true })}>
+            Anytime
+          </button>
+        </div>
+        <div className="hint">"Anytime" lets you pick and study a deck on Home even if nothing in it is due yet.</div>
+      </div>
+
+      <div className="card">
+        <div className="card-title">"Already mastered" shortcut</div>
+        <div className="toggle-row">
+          <button className={"toggle-opt" + (!user.settings.allowInstantMaster ? " active" : "")} onClick={() => update({ allowInstantMaster: false })}>
+            Off
+          </button>
+          <button className={"toggle-opt" + (user.settings.allowInstantMaster ? " active" : "")} onClick={() => update({ allowInstantMaster: true })}>
+            On
+          </button>
+        </div>
+        <div className="hint">When on, a button appears during study to instantly mark a word as mastered, skipping the rest of the boxes.</div>
+      </div>
+
+      <div className="card">
+        <div className="card-title">Reporting incorrect words</div>
+        <div className="toggle-row">
+          <button className={"toggle-opt" + (!user.settings.allowReporting ? " active" : "")} onClick={() => update({ allowReporting: false })}>
+            Off
+          </button>
+          <button className={"toggle-opt" + (user.settings.allowReporting ? " active" : "")} onClick={() => update({ allowReporting: true })}>
+            On
+          </button>
+        </div>
+        <div className="hint">When on, a "report" button appears during study to flag a word for the app's managers to review.</div>
       </div>
 
       <div className="card">
@@ -1419,6 +1691,13 @@ const CSS = `
 .icon-btn { background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 6px; color: var(--text-muted); cursor: pointer; }
 
 .confirm-message { font-size: 14px; color: var(--text); margin: 4px 0 16px; line-height: 1.5; }
+
+.report-row { display: flex; flex-direction: column; gap: 6px; padding: 12px 0; border-bottom: 1px solid var(--border); }
+.report-row:last-child { border-bottom: none; }
+.report-words { display: flex; gap: 10px; align-items: baseline; }
+.report-meta { display: flex; gap: 8px; align-items: center; font-size: 12px; color: var(--text-muted); flex-wrap: wrap; }
+.report-by { font-style: italic; }
+.report-reason { font-size: 13px; color: var(--gold-soft); }
 .confirm-modal { max-width: 360px; }
 
 .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: flex; align-items: flex-end; justify-content: center; z-index: 50; }
@@ -1442,9 +1721,13 @@ const CSS = `
 .progress-text { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
 
 .flashcard { text-align: center; padding: 32px 20px; }
-.flash-eyebrow { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 14px; }
+.flash-eyebrow-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+.flash-eyebrow { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.08em; }
+.report-link { background: none; border: none; color: var(--text-muted); font-size: 11px; cursor: pointer; }
+.report-link:hover { color: #e08a68; }
+.instant-master-btn { margin-top: 16px; font-size: 12px; color: var(--teal); }
 .flash-prompt { font-size: 26px; font-weight: 600; margin-bottom: 8px; }
-.flash-prompt.arabic { font-family: 'Amiri', serif; font-size: 60px; }
+.flash-prompt.arabic { font-family: 'Amiri', serif; font-size: 44px; }
 .flash-notes { color: var(--text-muted); font-size: 13px; margin-bottom: 16px; }
 
 .mc-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 18px; }
@@ -1488,7 +1771,7 @@ const CSS = `
 .nav-btn.active { color: var(--gold-soft); }
 
 @media (max-width: 420px) {
-  .flash-prompt.arabic { font-size: 52px; }
+  .flash-prompt.arabic { font-size: 34px; }
   .mc-grid { grid-template-columns: 1fr; }
 }
 `;
